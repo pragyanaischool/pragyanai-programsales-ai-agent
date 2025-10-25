@@ -45,11 +45,12 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Use SentenceTransformers embeddings via LangChain wrapper
 #from langchain.embeddings import HuggingFaceEmbeddings
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+#from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-from langchain_community.vectorstores import FAISS
+
 # ------------------------- Configuration --------------------------------
 MONGODB_URI = os.getenv("MONGODB_URI", "YOUR_MONGODB_URI_HERE")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "pragyanai")
