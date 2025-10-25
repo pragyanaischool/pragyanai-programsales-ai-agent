@@ -39,7 +39,8 @@ except Exception:
 
 #from langchain.document_loaders import PyPDFLoader
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+#from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Use SentenceTransformers embeddings via LangChain wrapper
 #from langchain.embeddings import HuggingFaceEmbeddings
