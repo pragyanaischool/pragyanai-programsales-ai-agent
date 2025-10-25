@@ -152,11 +152,12 @@ def build_llm_and_rag_chain(retriever):
     history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
     # QA prompt
-    qa_system_prompt = (
+    qa_system_prompt = ( """
         "You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. "
         "If you don't know the answer, just say that you don't know. Use at most three sentences and keep the answer concise.
 
 {context}"
+"""
     )
     qa_prompt = ChatPromptTemplate.from_messages(
         [
