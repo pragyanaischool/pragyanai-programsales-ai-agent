@@ -4,8 +4,10 @@ numpy
 langchain
 langchain-community
 langchain-groq
+langchain-core
 groq
 pymongo
 sentence-transformers
 faiss-cpu
 pypdf
+langchain-text-splitters
