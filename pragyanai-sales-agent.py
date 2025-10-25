@@ -3,20 +3,21 @@ PragyanAI - Agentic Sales Chat Bot (LangChain + Groq + LLaMA + FAISS + MongoDB)
 
 Features implemented in this single-file example:
 - Ingest a folder of PDFs (student-facing program PDFs / brochures) into a FAISS vectorstore
-- Build a Conversational Retrieval Chain using Groq (ChatGroq) as LLM and HuggingFace embeddings
+- Build a Retrieval-Augmented-Generation (RAG) pipeline using modern LangChain 0.2+ APIs
+  (`create_history_aware_retriever` + `create_retrieval_chain`), with Groq (ChatGroq) or OpenAI as fallback
 - Streamlit web UI that acts as an "agentic" sales assistant: asks for Name, Email, Phone, College, Branch, Semester, Academic Score
 - Recommends the best PragyanAI program (starter/intermediate/advanced) and explains why AI + why PragyanAI
 - Stores prospect details + conversation snippets to MongoDB Atlas
 
 Notes / TODOs before running:
 1) Create a MongoDB Atlas cluster and get the connection string. Set env var MONGODB_URI.
-2) Sign up for Groq, get GROQ_API_KEY and set it in env var GROQ_API_KEY.
+2) Sign up for Groq, get GROQ_API_KEY and set it in env var GROQ_API_KEY (if using Groq).
 3) Install required packages (example below).
 
 Requirements (example):
-    pip install langchain langchain-groq groq pymongo sentence-transformers faiss-cpu streamlit pypdf openai --upgrade
+    pip install -U langchain langchain-core langchain-community langchain-text-splitters langchain-groq langchain-openai pymongo sentence-transformers faiss-cpu streamlit pypdf
 
-This example aims to be a high-quality starting point. You may need to adapt imports depending on langchain and provider package versions.
+This file uses the modern LangChain modular API surface (0.2+). It attempts to import Groq's ChatGroq if available and falls back to OpenAI's ChatOpenAI.
 """
 
 import os
@@ -26,30 +27,32 @@ from typing import List, Dict, Any
 import streamlit as st
 from pymongo import MongoClient
 
-# LangChain / Groq / embeddings / vectorstore imports
-# NOTE: package names/paths may change with versions; adjust if you see ImportError.
+# ------------------------- LangChain & Providers -------------------------
+# Modern imports for LangChain 0.2+ modular packages
 try:
     from langchain_groq import ChatGroq
 except Exception:
-    # fallback import path (older/newer installs)
-    try:
-        from langchain.groq import ChatGroq
-    except Exception:
-        ChatGroq = None
+    ChatGroq = None
 
-#from langchain.document_loaders import PyPDFLoader
+# OpenAI fallback (if you prefer OpenAI)
+#try:
+#    from langchain_openai import ChatOpenAI
+#except Exception:
+#    ChatOpenAI = None
+
+# RAG / chain helpers
+from langchain.chains import (
+    create_history_aware_retriever,
+    create_retrieval_chain,
+)
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+# Community packages for documents, embeddings and vectorstores
 from langchain_community.document_loaders import PyPDFLoader
-#from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-# Use SentenceTransformers embeddings via LangChain wrapper
-#from langchain.embeddings import HuggingFaceEmbeddings
 from langchain_community.embeddings import HuggingFaceEmbeddings
-#from langchain.vectorstores import FAISS
 from langchain_community.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-
 
 # ------------------------- Configuration --------------------------------
 MONGODB_URI = os.getenv("MONGODB_URI", "YOUR_MONGODB_URI_HERE")
@@ -74,6 +77,9 @@ def ingest_pdfs_to_faiss(pdf_folder: str = PDFS_FOLDER, index_path: str = FAISS_
     """Loads PDFs, splits them, creates embeddings and stores in FAISS index on disk.
     Returns a LangChain retriever (FAISS wrapped)"""
     docs = []
+    if not os.path.exists(pdf_folder):
+        raise FileNotFoundError(f"PDF folder not found: {pdf_folder}")
+
     for fname in os.listdir(pdf_folder):
         if not fname.lower().endswith('.pdf'):
             continue
@@ -92,9 +98,8 @@ def ingest_pdfs_to_faiss(pdf_folder: str = PDFS_FOLDER, index_path: str = FAISS_
     # Create embeddings
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
-    # Build FAISS index
+    # Build FAISS index (save/load)
     if os.path.exists(index_path):
-        # try to load existing index
         try:
             vectorstore = FAISS.load_local(index_path, embeddings)
         except Exception:
@@ -107,27 +112,77 @@ def ingest_pdfs_to_faiss(pdf_folder: str = PDFS_FOLDER, index_path: str = FAISS_
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
     return retriever
 
-# ------------------------- LLM / Chain ----------------------------------
+# ------------------------- Build LLM + RAG chain -------------------------
 
-def build_llm_and_chain(retriever):
-    """Initializes Groq LLM (ChatGroq) and constructs a Conversational Retrieval Chain."""
-    if ChatGroq is None:
-        raise ImportError("ChatGroq import failed. Make sure langchain-groq and langchain are installed and up to date.")
+def build_llm_and_rag_chain(retriever):
+    """Creates an LLM (ChatGroq preferred, else ChatOpenAI) and constructs a
+    history-aware retriever + retrieval chain using modern LangChain APIs."""
+    # Create LLM: prefer ChatGroq (Groq LLaMA), else ChatOpenAI
+    llm = None
+    if ChatGroq is not None:
+        try:
+            # If Groq requires API key, ensure environment is set by user
+            llm = ChatGroq(model="llama-3.1-13b", temperature=0.0)
+        except Exception as e:
+            llm = None
+    if llm is None and ChatOpenAI is not None:
+        # Fallback to OpenAI Chat model (requires OPENAI_API_KEY env var)
+        try:
+            llm = ChatOpenAI()
+        except Exception:
+            llm = None
 
-    # Initialize LLM - choose a LLaMA/Groq model. Adjust model name as needed.
-    llm = ChatGroq(model="llama-3.1-13b", temperature=0.0)
+    if llm is None:
+        raise ImportError("No suitable LLM available. Install langchain_groq or langchain_openai and set credentials.")
 
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    # Build a contextualize (question rewriter) prompt
+    contextualize_q_system_prompt = (
+        "Given a chat history and the latest user question which might reference context in the chat history, "
+        "formulate a standalone question which can be understood without the chat history. Do NOT answer the question, just "
+        "reformulate it if needed and otherwise return it as is."
+    )
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
 
-    qa = ConversationalRetrievalChain.from_llm(llm=llm, retriever=retriever, memory=memory, return_source_documents=True)
-    return qa
+    history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
+
+    # QA prompt
+    qa_system_prompt = (
+        "You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. "
+        "If you don't know the answer, just say that you don't know. Use at most three sentences and keep the answer concise.
+
+{context}"
+    )
+    qa_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", qa_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+    return rag_chain
 
 # ------------------------- Recommendation logic -------------------------
 
 def recommend_program(profile: Dict[str, Any], top_k: int = 3) -> str:
     """Simple rule-based recommendation to start with. Replace with LLM-driven logic if required."""
-    sem = int(profile.get('semester', 1)) if profile.get('semester') else 1
-    score = float(profile.get('academic_score') or 0)
+    try:
+        sem = int(profile.get('semester', 1)) if profile.get('semester') else 1
+    except Exception:
+        sem = 1
+    try:
+        score = float(profile.get('academic_score') or 0)
+    except Exception:
+        score = 0.0
 
     if sem <= 2 or score < 60:
         return "Starter: AI Fundamentals & Python for AI (Beginner) - 6 weeks"
@@ -178,11 +233,11 @@ def run_streamlit_app():
         st.error(f"Error ingesting PDFs or loading index: {e}. Make sure PDFS_FOLDER contains brochures.")
         return
 
-    # Build chain
+    # Build rag chain
     try:
-        qa_chain = build_llm_and_chain(retriever)
+        rag_chain = build_llm_and_rag_chain(retriever)
     except Exception as e:
-        st.error(f"Error building LLM chain: {e}. Check langchain-groq installation and GROQ_API_KEY.")
+        st.error(f"Error building RAG chain: {e}. Check your LLM provider installations and credentials.")
         return
 
     # Chat UI
@@ -192,9 +247,17 @@ def run_streamlit_app():
     user_input = st.text_input("Ask me about PragyanAI programs, or type your question:")
     if st.button("Send") and user_input.strip():
         with st.spinner("Thinking..."):
-            result = qa_chain({'question': user_input, 'chat_history': st.session_state.history})
-            answer = result.get('answer') or result.get('result') or ""
-            sources = result.get('source_documents', [])
+            # rag_chain.invoke expects {"input": ..., "chat_history": [...]}
+            try:
+                res = rag_chain.invoke({"input": user_input, "chat_history": st.session_state.history})
+            except Exception as e:
+                st.error(f"RAG chain invocation failed: {e}")
+                res = {}
+
+            # robust extraction of answer and sources
+            answer = res.get('answer') or res.get('result') or res.get('output') or ''
+            # some chains return 'source_documents' or 'sources'
+            sources = res.get('source_documents') or res.get('sources') or []
 
             # show answer
             st.markdown("**Assistant:**")
@@ -204,8 +267,12 @@ def run_streamlit_app():
             if sources:
                 st.markdown("**Source snippets:**")
                 for i, doc in enumerate(sources[:3]):
-                    text = doc.page_content.replace('\n', ' ')[:400]
-                    st.write(f"- {text}...")
+                    # doc may be a Document object or dict
+                    text = getattr(doc, 'page_content', None) or doc.get('page_content') if isinstance(doc, dict) else str(doc)
+                    if text:
+                        text = text.replace('
+', ' ')[:400]
+                        st.write(f"- {text}...")
 
             # Save conversation locally and to MongoDB
             st.session_state.history.append((user_input, answer))
@@ -229,11 +296,13 @@ def run_streamlit_app():
         }
         rec = recommend_program(profile)
         st.success(f"Recommended: {rec}")
-        st.info("Why AI is good: AI automates repetitive tasks, increases problem-solving capability, and opens high-growth career paths.\nWhy PragyanAI: practical projects, mentor support, and career-track curriculum tailored for students.")
+        st.info("Why AI is good: AI automates repetitive tasks, increases problem-solving capability, and opens high-growth career paths.
+Why PragyanAI: practical projects, mentor support, and career-track curriculum tailored for students.")
 
     st.markdown("---")
-    st.markdown("*This demo app ingests PDFs into a FAISS vectorstore and uses Groq (LLaMA variant) via LangChain as the LLM. Customize the model and index path as needed.*")
+    st.markdown("*This demo app ingests PDFs into a FAISS vectorstore and uses Groq (LLaMA variant) or OpenAI via LangChain as the LLM. Customize the model and index path as needed.*")
 
 # ------------------------- Entrypoint -----------------------------------
 if __name__ == '__main__':
     run_streamlit_app()
+
