@@ -43,7 +43,7 @@ st.title("🤖 PragyanAI - Agentic Sales Chat Bot")
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
-    MONGO_URI = st.secrets["MONGO_URI"]
+    MONGO_URI = st.secrets["MONGODB_URI"]
 except Exception:
     st.error("Missing Streamlit secrets! Please configure GROQ_API_KEY, TAVILY_API_KEY, and MONGO_URI.")
     st.stop()
