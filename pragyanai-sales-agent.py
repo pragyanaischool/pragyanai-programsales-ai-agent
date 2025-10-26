@@ -1,28 +1,28 @@
 """
 PragyanAI - Advanced Agentic Sales Bot (LangChain + Groq + FAISS + MongoDB)
 
-ENHANCED: This version features a robust, stateful agent that acts as an expert sales representative.
+ENHANCED: This version adds a program selection screen, an embedded PDF viewer,
+and a more structured, context-aware conversational flow.
 
 Features:
-- Ingests PDFs into a FAISS vectorstore for program knowledge.
-- Deploys a stateful Agent that interactively collects user info one question at a time.
-- Uses the user's name to personalize the conversation.
-- Performs competitive analysis by searching the web for alternative programs.
-- Generates a persuasive markdown comparison table to highlight PragyanAI's strengths.
+- Lists programs from PDF files and allows user selection.
+- Displays the selected PDF brochure directly in the app.
+- Initiates a stateful, interactive conversation only after program selection.
+- Performs competitive analysis and generates persuasive comparisons.
 - Stores lead details and conversation history to MongoDB Atlas.
 
 Requirements:
     pip install -U langchain langchain_core langchain_community langchain-text-splitters langchain-groq pymongo sentence-transformers faiss-cpu streamlit pypdf pandas langchain-tavily langchain-openai
 """
-
 import os
 import time
-from typing import Dict, Any
+import base64
+from typing import Dict
 
 import streamlit as st
 from pymongo import MongoClient
 
-# ------------------------- LangChain & Providers -------------------------
+# LangChain & Providers
 try:
     from langchain_groq import ChatGroq
 except ImportError:
@@ -38,7 +38,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
-# ------------------------- Configuration --------------------------------
+# Configuration
 MONGODB_URI = st.secrets.get("MONGODB_URI")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
 TAVILY_API_KEY = st.secrets.get("TAVILY_API_KEY")
@@ -48,19 +48,17 @@ MONGO_COLLECTION = "leads"
 PDFS_FOLDER = "pdfs/"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
-# ------------------------- MongoDB utilities -----------------------------
+# MongoDB utilities
 @st.cache_resource
 def get_mongo_collection():
     if not MONGODB_URI:
         raise ValueError("Please set MONGODB_URI in your Streamlit secrets.")
     client = MongoClient(MONGODB_URI)
-    db = client[MONGO_DB_NAME]
-    return db[MONGO_COLLECTION]
+    return client[MONGO_DB_NAME][MONGO_COLLECTION]
 
-# ------------------------- Ingestion ------------------------------------
+# Ingestion
 @st.cache_resource
 def ingest_and_get_retriever(pdf_folder: str = PDFS_FOLDER):
-    """Loads PDFs, creates embeddings, stores in FAISS, and returns a retriever."""
     docs = []
     if not os.path.exists(pdf_folder):
         os.makedirs(pdf_folder, exist_ok=True)
@@ -79,23 +77,17 @@ def ingest_and_get_retriever(pdf_folder: str = PDFS_FOLDER):
     vectorstore = FAISS.from_documents(split_docs, embeddings)
     return vectorstore.as_retriever(search_kwargs={"k": 5})
 
-# ------------------------- Build Agent Executor -------------------------
+# Build Agent Executor
 def build_agent_executor(retriever, llm, user_profile):
-    """Creates a LangChain agent with tools and a highly persuasive sales persona."""
-    retriever_tool = create_retriever_tool(
-        retriever,
-        "pragyanai_program_search",
-        "Search for specific information about PragyanAI's programs from official brochures.",
-    )
+    retriever_tool = create_retriever_tool(retriever, "pragyanai_program_search", "Search for specific information about PragyanAI's programs.")
     search_tool = TavilySearchResults(max_results=3)
     tools = [retriever_tool, search_tool]
 
-    # This prompt is the core of the agent's persona and sales strategy
     system_prompt = f"""
-    You are Pragyan, a Senior Program Advisor and AI Career Strategist at PragyanAI. 
-    Your persona is expert, confident, and highly persuasive. Your goal is to understand the user's needs and convince them that a PragyanAI program is the best investment for their career.
+    You are Pragyan, a Senior Program Advisor at PragyanAI. Your persona is expert, confident, and highly persuasive. Your goal is to convert the user into a lead by convincing them that a PragyanAI program is the best choice for their career.
 
-    **Current User Information:**
+    **Current User Information & Context:**
+    - Initially Interested Program: {user_profile.get('selected_program', 'Not specified')}
     - Name: {user_profile.get('name', 'Not provided')}
     - Email: {user_profile.get('email', 'Not provided')}
     - Background: {user_profile.get('background', 'Not provided')}
@@ -104,133 +96,139 @@ def build_agent_executor(retriever, llm, user_profile):
     **Your Conversational Sales Strategy (Follow these steps strictly):**
 
     **Stage 1: Sequential Information Gathering**
-    1.  If you don't know the user's name, your FIRST question MUST be "To get started, could you please tell me your name?". Do not ask anything else.
-    2.  Once you have their name, address them by it. Your next question MUST be "Great to meet you, {user_profile.get('name', 'there')}! What's the best email to reach you at?".
-    3.  Once you have their email, your next question MUST be "Thanks! Now, to help me find the perfect fit, could you tell me about your current academic or professional background?".
+    1.  If you don't know the user's name, your FIRST question MUST be "I can certainly help you with the '{user_profile.get('selected_program', 'program')}'. To get started, could you please tell me your full name?". Do not ask anything else.
+    2.  Once you have their name, address them by it. Your next question MUST be "Great to meet you, {user_profile.get('name', 'there')}! What's the best email to reach you at for further details?".
+    3.  Once you have their email, your next question MUST be "Thanks! Now, to ensure this program is the perfect fit, could you tell me about your current academic or professional background?".
     4.  After they answer, ask about their career goals: "That's a great background. What are your long-term career aspirations?".
     
-    **Stage 2: Analysis and Recommendation**
-    1.  Once you have their background and goals, say "Thank you for sharing that. Based on what you've told me, I am analyzing the best path for you. One moment...".
-    2.  Use `pragyanai_program_search` to find the most suitable PragyanAI program.
+    **Stage 2: Analysis and Persuasive Recommendation**
+    1.  Once you have their background and goals, say "Thank you for sharing that. Based on your goal to become a {user_profile.get('goals', 'specialist in your field')}, and your interest in the {user_profile.get('selected_program')}, I am running an analysis to confirm the best path for you. One moment...".
+    2.  Use `pragyanai_program_search` to find details about the selected program and confirm it's a good fit.
     3.  Use `tavily_search_results_json` to find 2-3 common alternatives (e.g., "Coursera data science", "university online masters in AI").
-
-    **Stage 3: Persuasive Comparison & Closing**
-    1.  Present your primary recommendation from PragyanAI.
-    2.  Create a detailed, persuasive markdown comparison table with columns: "Feature", "PragyanAI Program", and "Typical Alternatives (MOOCs, Self-Study)".
-    3.  The table MUST highlight PragyanAI's strengths: `Practical Projects`, `Live Mentorship`, `Career Support & Placement Guarantee`, `Structured Curriculum`.
-    4.  Use your research to fill the table, framing PragyanAI as the superior choice.
-    5.  Conclude with a strong closing statement like: "As you can see, {user_profile.get('name')}, while other options exist, our program is engineered for tangible career outcomes. Are you ready to take the next step?"
+    4.  Present your recommendation for the PragyanAI program. Create a detailed, persuasive markdown comparison table with columns: "Feature", "PragyanAI Program", and "Typical Alternatives (MOOCs, Self-Study)".
+    5.  The table MUST highlight PragyanAI's strengths: `Practical Projects`, `Live Mentorship`, `Career Support & Placement Guarantee`, `Structured Curriculum`.
+    6.  Conclude with a strong closing statement like: "As you can see, {user_profile.get('name')}, while other options exist, our program is engineered for tangible career outcomes. Are you ready to take the next step?"
     """
     
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-            MessagesPlaceholder("agent_scratchpad"),
-        ]
-    )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ])
     agent = create_tool_calling_agent(llm, tools, prompt)
     return AgentExecutor(agent=agent, tools=tools, verbose=True)
 
-# ------------------------- Streamlit App --------------------------------
-def run_streamlit_app():
-    st.set_page_config(page_title="PragyanAI Sales Advisor", layout="centered")
-    # st.image("PragyanAI_Transperent.png")
-    st.title("PragyanAI Sales Advisor")
+# Helper function to display PDF
+def display_pdf(file_path):
+    try:
+        with open(file_path, "rb") as f:
+            base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
+        st.markdown(pdf_display, unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Failed to display PDF: {e}")
 
-    # Initialize session state variables
+# Streamlit App
+def run_streamlit_app():
+    st.set_page_config(page_title="PragyanAI Sales Advisor", layout="wide")
+    st.title("PragyanAI Program Advisor")
+
+    # Initialize session state
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     if "user_profile" not in st.session_state:
         st.session_state.user_profile = {}
+    if "program_selected" not in st.session_state:
+        st.session_state.program_selected = False
 
-    # Sidebar to show collected data
-    with st.sidebar:
-        st.header("Collected Information")
-        st.info("Your details will appear here as you chat with the assistant.")
-        st.text_input("Full Name", value=st.session_state.user_profile.get("name", ""), disabled=True)
-        st.text_input("Email", value=st.session_state.user_profile.get("email", ""), disabled=True)
-        st.text_area("Background", value=st.session_state.user_profile.get("background", ""), disabled=True)
-        st.text_area("Career Goals", value=st.session_state.user_profile.get("goals", ""), disabled=True)
-
-    # Initialize agent
+    # Initialize core components
     try:
-        if 'agent_executor' not in st.session_state:
+        if 'llm' not in st.session_state:
             if not GROQ_API_KEY or not TAVILY_API_KEY:
-                st.error("API keys (GROQ_API_KEY, TAVILY_API_KEY) not found. Please add them to your Streamlit secrets.")
+                st.error("API keys not found in Streamlit secrets.")
                 return
-            llm = ChatGroq(model="llama3-70b-8192", temperature=0.3, api_key=GROQ_API_KEY)
-            retriever = ingest_and_get_retriever()
-            # Agent is now built on-the-fly in the chat loop to get the latest user_profile
-            st.session_state.llm = llm
-            st.session_state.retriever = retriever
-            
-    except FileNotFoundError as e:
+            st.session_state.llm = ChatGroq(model="llama3-70b-8192", temperature=0.3, api_key=GROQ_API_KEY)
+        if 'retriever' not in st.session_state:
+            st.session_state.retriever = ingest_and_get_retriever()
+    except Exception as e:
         st.error(f"Initialization Error: {e}")
         return
-    except Exception as e:
-        st.error(f"An error occurred during setup: {e}")
-        return
 
-    # Display chat history
-    for message in st.session_state.chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # --- Program Selection UI ---
+    if not st.session_state.program_selected:
+        st.info("Please select a program to learn more and begin your consultation.")
+        pdf_files = [f for f in os.listdir(PDFS_FOLDER) if f.lower().endswith('.pdf')]
+        program_names = [os.path.splitext(f)[0].replace("_", " ") for f in pdf_files]
+        
+        selected_program_name = st.selectbox("Choose a Program:", options=program_names)
 
-    # Handle user input
-    if prompt := st.chat_input("Say 'Hi' to get started!"):
-        st.chat_message("user").markdown(prompt)
-        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        if st.button("Confirm Selection"):
+            st.session_state.program_selected = True
+            st.session_state.user_profile['selected_program'] = selected_program_name
+            # Find the corresponding filename
+            for f in pdf_files:
+                if selected_program_name in f.replace("_", " "):
+                    st.session_state.selected_pdf_path = os.path.join(PDFS_FOLDER, f)
+                    break
+            st.rerun()
 
-        with st.chat_message("assistant"):
-            with st.spinner("Pragyan is thinking..."):
-                try:
-                    # Rebuild agent with the latest user profile
-                    agent_executor = build_agent_executor(
-                        st.session_state.retriever, 
-                        st.session_state.llm,
-                        st.session_state.user_profile
-                    )
-                    
-                    response = agent_executor.invoke({
-                        "input": prompt, 
-                        "chat_history": st.session_state.chat_history
-                    })
-                    answer = response.get('output', 'Sorry, I encountered an issue.')
-                    
-                    # Heuristic to update user profile from the conversation
-                    # This is a simplified approach; more advanced parsing could be used
-                    if "my name is" in prompt.lower():
-                        st.session_state.user_profile['name'] = prompt.split("is")[-1].strip()
-                    elif "@" in prompt and "." in prompt:
-                         st.session_state.user_profile['email'] = prompt.strip()
-                    elif "background" in st.session_state.chat_history[-2]['content'].lower():
-                         st.session_state.user_profile['background'] = prompt.strip()
-                    elif "aspirations" in st.session_state.chat_history[-2]['content'].lower():
-                         st.session_state.user_profile['goals'] = prompt.strip()
+    # --- Main Chat Interface (after selection) ---
+    else:
+        st.header(f"Discussing: {st.session_state.user_profile['selected_program']}")
+        display_pdf(st.session_state.selected_pdf_path)
+        st.markdown("---")
 
-                    st.markdown(answer)
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
-                    
-                    # Save lead to MongoDB once email is collected
-                    if 'email' in st.session_state.user_profile and not st.session_state.user_profile.get('saved'):
-                        try:
+        # Display chat history
+        for message in st.session_state.chat_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        # Handle user input
+        if prompt := st.chat_input("Ask a question or say 'Hi' to get started!"):
+            st.chat_message("user").markdown(prompt)
+            st.session_state.chat_history.append({"role": "user", "content": prompt})
+
+            with st.chat_message("assistant"):
+                with st.spinner("Pragyan is thinking..."):
+                    try:
+                        agent_executor = build_agent_executor(
+                            st.session_state.retriever,
+                            st.session_state.llm,
+                            st.session_state.user_profile
+                        )
+                        response = agent_executor.invoke({
+                            "input": prompt,
+                            "chat_history": st.session_state.chat_history
+                        })
+                        answer = response.get('output', 'Sorry, I encountered an issue.')
+
+                        # Update user profile from conversation
+                        if not st.session_state.user_profile.get('name') and ("my name is" in prompt.lower() or len(prompt.split()) <= 3):
+                            st.session_state.user_profile['name'] = prompt.strip().title()
+                        elif not st.session_state.user_profile.get('email') and "@" in prompt and "." in prompt:
+                            st.session_state.user_profile['email'] = prompt.strip()
+                        elif st.session_state.user_profile.get('email') and not st.session_state.user_profile.get('background'):
+                            st.session_state.user_profile['background'] = prompt.strip()
+                        elif st.session_state.user_profile.get('background') and not st.session_state.user_profile.get('goals'):
+                            st.session_state.user_profile['goals'] = prompt.strip()
+
+                        st.markdown(answer)
+                        st.session_state.chat_history.append({"role": "assistant", "content": answer})
+
+                        # Save lead to MongoDB once email is collected
+                        if 'email' in st.session_state.user_profile and not st.session_state.user_profile.get('saved'):
                             get_mongo_collection().update_one(
                                 {'email': st.session_state.user_profile['email']},
                                 {'$set': st.session_state.user_profile},
                                 upsert=True
                             )
                             st.session_state.user_profile['saved'] = True
-                        except Exception as e:
-                            print(f"MongoDB Error: {e}") # Log error without disturbing user
+                        
+                        st.rerun()
 
-                    # Rerun to update the sidebar with new info
-                    st.rerun()
+                    except Exception as e:
+                        st.error(f"An error occurred: {e}")
 
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
-
-# ------------------------- Entrypoint -----------------------------------
 if __name__ == '__main__':
     run_streamlit_app()
