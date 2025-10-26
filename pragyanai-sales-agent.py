@@ -30,7 +30,8 @@ except ImportError:
     st.error("Please run 'pip install langchain_groq'")
     ChatGroq = None
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent, Tool
+#from langchain.agents import AgentExecutor, create_tool_calling_agent, Tool
+from langchain.agents import AgentExecutor, create_react_agent, Tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.tools.retriever import create_retriever_tool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -92,7 +93,8 @@ def create_program_info_agent(llm, retriever):
         ("human", "{input}"),
         MessagesPlaceholder("agent_scratchpad"),
     ])
-    agent = create_tool_calling_agent(llm, [retriever_tool], prompt)
+    #agent = create_tool_calling_agent(llm, [retriever_tool], prompt)
+    agent = create_react_agent(llm, [retriever_tool], prompt)
     return AgentExecutor(agent=agent, tools=[retriever_tool], verbose=True)
 
 # Function to create the Market Research Specialist Agent
@@ -104,6 +106,7 @@ def create_market_research_agent(llm):
         MessagesPlaceholder("agent_scratchpad"),
     ])
     agent = create_tool_calling_agent(llm, [search_tool], prompt)
+    #main_agent = create_react_agent(llm, tools, prompt)
     return AgentExecutor(agent=agent, tools=[search_tool], verbose=True)
 
 # Upgraded Main function to build the enhanced Orchestrator Agent
@@ -170,7 +173,8 @@ def build_main_orchestrator(llm, retriever, user_profile):
         MessagesPlaceholder("agent_scratchpad"),
     ])
     
-    main_agent = create_tool_calling_agent(llm, tools, prompt)
+    #main_agent = create_tool_calling_agent(llm, tools, prompt)
+    main_agent = create_react_agent(llm, tools, prompt)
     return AgentExecutor(agent=main_agent, tools=tools, verbose=True)
 
 # Helper function to display PDF
