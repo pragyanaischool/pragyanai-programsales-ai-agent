@@ -143,6 +143,7 @@ def build_agent_executor(retriever, llm):
 # ------------------------- Streamlit App --------------------------------
 def run_streamlit_app():
     st.set_page_config(page_title="PragyanAI Sales Agent", layout="centered")
+    st.image("PragyanAI_Transperent.png")
     st.title("PragyanAI Program Advisor")
 
     # Sidebar for lead capture
