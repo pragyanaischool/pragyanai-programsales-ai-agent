@@ -162,10 +162,7 @@ def build_main_orchestrator(llm, retriever, user_profile):
 # Helper function to display PDF (Unchanged)
 def display_pdf(file_path):
     try:
-        with open(file_path, "rb") as f:
-            base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
-        st.markdown(pdf_display, unsafe_allow_html=True)
+        st.pdf(file_path)
     except Exception as e:
         st.error(f"Failed to display PDF: {e}")
 
@@ -188,7 +185,7 @@ def run_streamlit_app():
             if not GROQ_API_KEY or not TAVILY_API_KEY:
                 st.error("API keys not found in Streamlit secrets.")
                 return
-            st.session_state.llm = ChatGroq(model="llama3-70b-8192", temperature=0.3, api_key=GROQ_API_KEY)
+            st.session_state.llm = ChatGroq(model="lllama-3.3-70b-versatile", temperature=0.3, api_key=GROQ_API_KEY)
         if 'retriever' not in st.session_state:
             st.session_state.retriever = ingest_and_get_retriever()
     except Exception as e:
