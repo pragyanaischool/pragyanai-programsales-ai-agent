@@ -296,8 +296,7 @@ def run_streamlit_app():
         }
         rec = recommend_program(profile)
         st.success(f"Recommended: {rec}")
-        st.info("Why AI is good: AI automates repetitive tasks, increases problem-solving capability, and opens high-growth career paths.
-Why PragyanAI: practical projects, mentor support, and career-track curriculum tailored for students.")
+        st.info("Why AI is good: AI automates repetitive tasks, increases problem-solving capability, and opens high-growth career paths. Why PragyanAI: practical projects, mentor support, and career-track curriculum tailored for students.")
 
     st.markdown("---")
     st.markdown("*This demo app ingests PDFs into a FAISS vectorstore and uses Groq (LLaMA variant) or OpenAI via LangChain as the LLM. Customize the model and index path as needed.*")
