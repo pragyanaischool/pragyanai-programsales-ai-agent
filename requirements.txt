@@ -6,11 +6,16 @@ numpy
 #langchain-groq
 #langchain-core
 # --- LangChain Core Packages ---
-langchain==0.2.1
-langchain-core==0.2.3
-langchain-community==0.2.1
-langchain-groq==0.1.5
-langchain-text-splitters==0.2.0
+#langchain==0.2.1
+langchain
+#langchain-core==0.2.3
+langchain-core
+#langchain-community==0.2.1
+langchain-community
+#langchain-groq==0.1.5
+langchain-groq
+#langchain-text-splitters==0.2.0
+langchain-text-splitters
 groq
 pymongo
 sentence-transformers
