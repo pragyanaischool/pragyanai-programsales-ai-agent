@@ -185,7 +185,7 @@ def run_streamlit_app():
             if not GROQ_API_KEY or not TAVILY_API_KEY:
                 st.error("API keys not found in Streamlit secrets.")
                 return
-            st.session_state.llm = ChatGroq(model="lllama-3.3-70b-versatile", temperature=0.3, api_key=GROQ_API_KEY)
+            st.session_state.llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.3, api_key=GROQ_API_KEY)
         if 'retriever' not in st.session_state:
             st.session_state.retriever = ingest_and_get_retriever()
     except Exception as e:
