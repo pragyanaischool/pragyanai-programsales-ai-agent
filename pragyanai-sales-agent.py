@@ -271,8 +271,7 @@ def run_streamlit_app():
                     # doc may be a Document object or dict
                     text = getattr(doc, 'page_content', None) or doc.get('page_content') if isinstance(doc, dict) else str(doc)
                     if text:
-                        text = text.replace('
-', ' ')[:400]
+                        text = text.replace('\n', ' ')[:400]
                         st.write(f"- {text}...")
 
             # Save conversation locally and to MongoDB
