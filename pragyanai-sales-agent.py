@@ -1,18 +1,18 @@
 """
-PragyanAI - Agentic Sales Chat Bot (LangChain + Groq + LLaMA + FAISS + MongoDB)
+PragyanAI - Advanced Agentic Sales Bot (LangChain + Groq + FAISS + MongoDB)
 
-MODIFIED: This version uses a LangChain Agent instead of a simple RAG chain.
+ENHANCED: This version features a robust, stateful agent that acts as an expert sales representative.
 
 Features:
-- Ingests PDFs into a FAISS vectorstore.
-- Creates an Agent that has two tools:
-    1. A Retriever tool to search for information within the program PDFs.
-    2. A Web Search tool (Tavily) to find external information.
-- The Agent proactively asks for user details to make a personalized recommendation.
-- Stores prospect details + conversation snippets to MongoDB Atlas.
+- Ingests PDFs into a FAISS vectorstore for program knowledge.
+- Deploys a stateful Agent that interactively collects user info one question at a time.
+- Uses the user's name to personalize the conversation.
+- Performs competitive analysis by searching the web for alternative programs.
+- Generates a persuasive markdown comparison table to highlight PragyanAI's strengths.
+- Stores lead details and conversation history to MongoDB Atlas.
 
 Requirements:
-    pip install -U langchain langchain-core langchain-community langchain-text-splitters langchain-groq langchain-openai pymongo sentence-transformers faiss-cpu streamlit pypdf pandas langchain-tavily
+    pip install -U langchain langchain_core langchain_community langchain-text-splitters langchain-groq pymongo sentence-transformers faiss-cpu streamlit pypdf pandas langchain-tavily langchain-openai
 """
 
 import os
@@ -26,13 +26,12 @@ from pymongo import MongoClient
 try:
     from langchain_groq import ChatGroq
 except ImportError:
+    st.error("Please run 'pip install langchain_groq'")
     ChatGroq = None
 
-# MODIFIED: LangChain Agent and Tool imports
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.tools.retriever import create_retriever_tool
-
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -40,7 +39,6 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 # ------------------------- Configuration --------------------------------
-# MODIFIED: Added Tavily API Key from secrets
 MONGODB_URI = st.secrets.get("MONGODB_URI")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
 TAVILY_API_KEY = st.secrets.get("TAVILY_API_KEY")
@@ -49,12 +47,11 @@ MONGO_DB_NAME = "pragyanai"
 MONGO_COLLECTION = "leads"
 PDFS_FOLDER = "pdfs/"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-FAISS_INDEX_PATH = "faiss_index"
 
 # ------------------------- MongoDB utilities -----------------------------
 @st.cache_resource
 def get_mongo_collection():
-    if not MONGODB_URI or MONGODB_URI == "None":
+    if not MONGODB_URI:
         raise ValueError("Please set MONGODB_URI in your Streamlit secrets.")
     client = MongoClient(MONGODB_URI)
     db = client[MONGO_DB_NAME]
@@ -62,7 +59,7 @@ def get_mongo_collection():
 
 # ------------------------- Ingestion ------------------------------------
 @st.cache_resource
-def ingest_and_get_retriever(pdf_folder: str = PDFS_FOLDER, index_path: str = FAISS_INDEX_PATH):
+def ingest_and_get_retriever(pdf_folder: str = PDFS_FOLDER):
     """Loads PDFs, creates embeddings, stores in FAISS, and returns a retriever."""
     docs = []
     if not os.path.exists(pdf_folder):
@@ -70,60 +67,59 @@ def ingest_and_get_retriever(pdf_folder: str = PDFS_FOLDER, index_path: str = FA
     
     pdf_files = [f for f in os.listdir(pdf_folder) if f.lower().endswith('.pdf')]
     if not pdf_files:
-        raise FileNotFoundError(f"No PDFs found in '{pdf_folder}'. Please add program brochures to enable the agent.")
+        raise FileNotFoundError(f"No PDFs found in '{pdf_folder}'. Please add program brochures.")
 
     for fname in pdf_files:
-        full_path = os.path.join(pdf_folder, fname)
-        loader = PyPDFLoader(full_path)
+        loader = PyPDFLoader(os.path.join(pdf_folder, fname))
         docs.extend(loader.load())
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     split_docs = splitter.split_documents(docs)
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-
     vectorstore = FAISS.from_documents(split_docs, embeddings)
-    # No need to save/load from disk in a stateless Streamlit app, just build it once.
-    
     return vectorstore.as_retriever(search_kwargs={"k": 5})
 
-# ------------------------- MODIFIED: Build Agent Executor -------------------------
-def build_agent_executor(retriever, llm):
-    """Creates a LangChain agent with a retriever tool and a web search tool."""
-    
-    # 1. Create the Retriever Tool
+# ------------------------- Build Agent Executor -------------------------
+def build_agent_executor(retriever, llm, user_profile):
+    """Creates a LangChain agent with tools and a highly persuasive sales persona."""
     retriever_tool = create_retriever_tool(
         retriever,
         "pragyanai_program_search",
-        "Use this tool to search for specific information about PragyanAI's programs, curriculum, duration, fees, and other details mentioned in the official brochures.",
+        "Search for specific information about PragyanAI's programs from official brochures.",
     )
-
-    # 2. Create the Web Search Tool
-    search_tool = TavilySearchResults(max_results=2)
-    
+    search_tool = TavilySearchResults(max_results=3)
     tools = [retriever_tool, search_tool]
 
-    # 3. Create the Agent Prompt
-    # This prompt is crucial as it defines the agent's behavior and logic.
-    system_prompt = """
-    You are an expert AI assistant for PragyanAI, a leading AI training institution. Your name is Pragyan.
-    Your goal is to help prospective students understand PragyanAI's offerings and guide them to the best program for their needs.
+    # This prompt is the core of the agent's persona and sales strategy
+    system_prompt = f"""
+    You are Pragyan, a Senior Program Advisor and AI Career Strategist at PragyanAI. 
+    Your persona is expert, confident, and highly persuasive. Your goal is to understand the user's needs and convince them that a PragyanAI program is the best investment for their career.
 
-    You have two tools at your disposal:
-    1. `pragyanai_program_search`: For searching specific details within PragyanAI's official documents.
-    2. `tavily_search_results_json`: For general web searches about AI industry trends, career paths, or technologies.
+    **Current User Information:**
+    - Name: {user_profile.get('name', 'Not provided')}
+    - Email: {user_profile.get('email', 'Not provided')}
+    - Background: {user_profile.get('background', 'Not provided')}
+    - Goals: {user_profile.get('goals', 'Not provided')}
 
-    **Your process is as follows:**
-    1.  **Greet the user and introduce yourself.**
-    2.  **If the user asks a general question like "Which program is good for me?", you MUST first gather information.** Do not try to answer without context. Ask them about their:
-        - Current academic status (college, branch, semester)
-        - Academic performance (e.g., percentage or CGPA)
-        - Career goals (e.g., "I want to be a Data Scientist")
-        - Any prior experience in programming or AI.
-    3.  **Once you have this information, use your tools to formulate a recommendation.**
-        - Use `pragyanai_program_search` to find the most suitable PragyanAI program from the documents that matches the user's profile.
-        - Use `tavily_search_results_json` to find supporting information, like the job market demand for skills taught in that program.
-    4.  **Present your recommendation.** Explain WHY you are recommending a specific program, linking it back to the user's goals and the information you found. Be persuasive and helpful.
-    5.  **For any other specific questions**, use the appropriate tool to find the answer. For questions about PragyanAI, always prefer the `pragyanai_program_search` tool first.
+    **Your Conversational Sales Strategy (Follow these steps strictly):**
+
+    **Stage 1: Sequential Information Gathering**
+    1.  If you don't know the user's name, your FIRST question MUST be "To get started, could you please tell me your name?". Do not ask anything else.
+    2.  Once you have their name, address them by it. Your next question MUST be "Great to meet you, {user_profile.get('name', 'there')}! What's the best email to reach you at?".
+    3.  Once you have their email, your next question MUST be "Thanks! Now, to help me find the perfect fit, could you tell me about your current academic or professional background?".
+    4.  After they answer, ask about their career goals: "That's a great background. What are your long-term career aspirations?".
+    
+    **Stage 2: Analysis and Recommendation**
+    1.  Once you have their background and goals, say "Thank you for sharing that. Based on what you've told me, I am analyzing the best path for you. One moment...".
+    2.  Use `pragyanai_program_search` to find the most suitable PragyanAI program.
+    3.  Use `tavily_search_results_json` to find 2-3 common alternatives (e.g., "Coursera data science", "university online masters in AI").
+
+    **Stage 3: Persuasive Comparison & Closing**
+    1.  Present your primary recommendation from PragyanAI.
+    2.  Create a detailed, persuasive markdown comparison table with columns: "Feature", "PragyanAI Program", and "Typical Alternatives (MOOCs, Self-Study)".
+    3.  The table MUST highlight PragyanAI's strengths: `Practical Projects`, `Live Mentorship`, `Career Support & Placement Guarantee`, `Structured Curriculum`.
+    4.  Use your research to fill the table, framing PragyanAI as the superior choice.
+    5.  Conclude with a strong closing statement like: "As you can see, {user_profile.get('name')}, while other options exist, our program is engineered for tangible career outcomes. Are you ready to take the next step?"
     """
     
     prompt = ChatPromptTemplate.from_messages(
@@ -134,55 +130,42 @@ def build_agent_executor(retriever, llm):
             MessagesPlaceholder("agent_scratchpad"),
         ]
     )
-
     agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True) # Set verbose=False for production
-    
-    return agent_executor
+    return AgentExecutor(agent=agent, tools=tools, verbose=True)
 
 # ------------------------- Streamlit App --------------------------------
 def run_streamlit_app():
-    st.set_page_config(page_title="PragyanAI Sales Agent", layout="centered")
-    st.image("PragyanAI_Transperent.png")
-    st.title("PragyanAI Program Advisor")
+    st.set_page_config(page_title="PragyanAI Sales Advisor", layout="centered")
+    # st.image("PragyanAI_Transperent.png")
+    st.title("PragyanAI Sales Advisor")
 
-    # Sidebar for lead capture
-    with st.sidebar:
-        st.header("Your Details")
-        st.info("Providing your details helps the AI give a better recommendation.")
-        name = st.text_input("Full name")
-        email = st.text_input("Email")
-        phone = st.text_input("Phone")
-        
-        if st.button("Save Details"):
-            if name and email:
-                try:
-                    coll = get_mongo_collection()
-                    lead = {"name": name, "email": email, "phone": phone, "created_at": time.time()}
-                    coll.insert_one(lead)
-                    st.success("Details saved!")
-                except Exception as e:
-                    st.error(f"Error saving details: {e}")
-            else:
-                st.warning("Please provide at least your name and email.")
-
-    # Initialize chat history
+    # Initialize session state variables
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
+    if "user_profile" not in st.session_state:
+        st.session_state.user_profile = {}
+
+    # Sidebar to show collected data
+    with st.sidebar:
+        st.header("Collected Information")
+        st.info("Your details will appear here as you chat with the assistant.")
+        st.text_input("Full Name", value=st.session_state.user_profile.get("name", ""), disabled=True)
+        st.text_input("Email", value=st.session_state.user_profile.get("email", ""), disabled=True)
+        st.text_area("Background", value=st.session_state.user_profile.get("background", ""), disabled=True)
+        st.text_area("Career Goals", value=st.session_state.user_profile.get("goals", ""), disabled=True)
 
     # Initialize agent
     try:
         if 'agent_executor' not in st.session_state:
-            if not GROQ_API_KEY:
-                st.error("GROQ_API_KEY not found. Please add it to your Streamlit secrets.")
+            if not GROQ_API_KEY or not TAVILY_API_KEY:
+                st.error("API keys (GROQ_API_KEY, TAVILY_API_KEY) not found. Please add them to your Streamlit secrets.")
                 return
-            if not TAVILY_API_KEY:
-                st.error("TAVILY_API_KEY not found. Please add it to your Streamlit secrets.")
-                return
-
-            llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0, api_key=GROQ_API_KEY)
+            llm = ChatGroq(model="llama3-70b-8192", temperature=0.3, api_key=GROQ_API_KEY)
             retriever = ingest_and_get_retriever()
-            st.session_state.agent_executor = build_agent_executor(retriever, llm)
+            # Agent is now built on-the-fly in the chat loop to get the latest user_profile
+            st.session_state.llm = llm
+            st.session_state.retriever = retriever
+            
     except FileNotFoundError as e:
         st.error(f"Initialization Error: {e}")
         return
@@ -196,27 +179,54 @@ def run_streamlit_app():
             st.markdown(message["content"])
 
     # Handle user input
-    if prompt := st.chat_input("Hi! Which PragyanAI program is right for me?"):
+    if prompt := st.chat_input("Say 'Hi' to get started!"):
         st.chat_message("user").markdown(prompt)
         st.session_state.chat_history.append({"role": "user", "content": prompt})
 
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
+            with st.spinner("Pragyan is thinking..."):
                 try:
-                    response = st.session_state.agent_executor.invoke(
-                        {"input": prompt, "chat_history": st.session_state.chat_history}
+                    # Rebuild agent with the latest user profile
+                    agent_executor = build_agent_executor(
+                        st.session_state.retriever, 
+                        st.session_state.llm,
+                        st.session_state.user_profile
                     )
+                    
+                    response = agent_executor.invoke({
+                        "input": prompt, 
+                        "chat_history": st.session_state.chat_history
+                    })
                     answer = response.get('output', 'Sorry, I encountered an issue.')
+                    
+                    # Heuristic to update user profile from the conversation
+                    # This is a simplified approach; more advanced parsing could be used
+                    if "my name is" in prompt.lower():
+                        st.session_state.user_profile['name'] = prompt.split("is")[-1].strip()
+                    elif "@" in prompt and "." in prompt:
+                         st.session_state.user_profile['email'] = prompt.strip()
+                    elif "background" in st.session_state.chat_history[-2]['content'].lower():
+                         st.session_state.user_profile['background'] = prompt.strip()
+                    elif "aspirations" in st.session_state.chat_history[-2]['content'].lower():
+                         st.session_state.user_profile['goals'] = prompt.strip()
+
                     st.markdown(answer)
                     st.session_state.chat_history.append({"role": "assistant", "content": answer})
                     
-                    # Save conversation to MongoDB
-                    try:
-                        mongo_doc = {"question": prompt, "answer": answer, "timestamp": time.time()}
-                        if email: mongo_doc["lead_email"] = email
-                        get_mongo_collection().insert_one(mongo_doc)
-                    except Exception:
-                        pass # Non-critical error
+                    # Save lead to MongoDB once email is collected
+                    if 'email' in st.session_state.user_profile and not st.session_state.user_profile.get('saved'):
+                        try:
+                            get_mongo_collection().update_one(
+                                {'email': st.session_state.user_profile['email']},
+                                {'$set': st.session_state.user_profile},
+                                upsert=True
+                            )
+                            st.session_state.user_profile['saved'] = True
+                        except Exception as e:
+                            print(f"MongoDB Error: {e}") # Log error without disturbing user
+
+                    # Rerun to update the sidebar with new info
+                    st.rerun()
 
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
