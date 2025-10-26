@@ -179,7 +179,7 @@ def run_streamlit_app():
                 st.error("TAVILY_API_KEY not found. Please add it to your Streamlit secrets.")
                 return
 
-            llm = ChatGroq(model="llama3-70b-8192", temperature=0.0, api_key=GROQ_API_KEY)
+            llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0, api_key=GROQ_API_KEY)
             retriever = ingest_and_get_retriever()
             st.session_state.agent_executor = build_agent_executor(retriever, llm)
     except FileNotFoundError as e:
