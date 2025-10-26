@@ -147,7 +147,7 @@ def get_llm():
     llm = None
     if ChatGroq and GROQ_API_KEY:
         try:
-            llm = ChatGroq(model="llama3-8b-8192", temperature=0.0, api_key=GROQ_API_KEY)
+            llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0, api_key=GROQ_API_KEY)
         except Exception as e:
             st.error(f"Error initializing ChatGroq: {e}. Falling back to OpenAI (if configured).")
     if llm is None and ChatOpenAI:
