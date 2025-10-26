@@ -31,23 +31,17 @@ from pymongo import MongoClient
 # Modern imports for LangChain 0.2+ modular packages
 try:
     from langchain_groq import ChatGroq
-except Exception:
+except ImportError: # Use ImportError for module not found errors
     ChatGroq = None
 
 # OpenAI fallback (if you prefer OpenAI)
-#try:
-#    from langchain_openai import ChatOpenAI
-#except Exception:
-#    ChatOpenAI = None
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:
+    ChatOpenAI = None
 
-# RAG / chain helpers
-from langchain.chains import create_history_aware_retriever
-#from langchain.chains.history_aware_retriever import create_history_aware_retriever
-from langchain.chains.retrieval import create_retrieval_chain
-from langchain.chains.combine_documents.stuff import create_stuff_documents_chain
-from langchain.chains import create_history_aware_retriever
-
-from langchain.chains.combine_documents import create_stuff_documents_chain
+# RAG / chain helpers - Standardized imports from langchain.chains
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain, create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 # Community packages for documents, embeddings and vectorstores
@@ -80,7 +74,11 @@ def ingest_pdfs_to_faiss(pdf_folder: str = PDFS_FOLDER, index_path: str = FAISS_
     Returns a LangChain retriever (FAISS wrapped)"""
     docs = []
     if not os.path.exists(pdf_folder):
-        raise FileNotFoundError(f"PDF folder not found: {pdf_folder}")
+        # Create the directory if it doesn't exist
+        os.makedirs(pdf_folder, exist_ok=True)
+        # Raise error if still no PDFs after creating folder,
+        # or if the folder exists but is empty.
+        raise FileNotFoundError(f"PDF folder not found: {pdf_folder}. Created it. Please put your program PDFs there.")
 
     for fname in os.listdir(pdf_folder):
         if not fname.lower().endswith('.pdf'):
@@ -103,8 +101,9 @@ def ingest_pdfs_to_faiss(pdf_folder: str = PDFS_FOLDER, index_path: str = FAISS_
     # Build FAISS index (save/load)
     if os.path.exists(index_path):
         try:
-            vectorstore = FAISS.load_local(index_path, embeddings)
-        except Exception:
+            vectorstore = FAISS.load_local(index_path, embeddings, allow_dangerous_deserialization=True) # Added allow_dangerous_deserialization for newer FAISS
+        except Exception as e:
+            st.warning(f"Error loading existing FAISS index: {e}. Rebuilding index.")
             vectorstore = FAISS.from_documents(split_docs, embeddings)
             vectorstore.save_local(index_path)
     else:
@@ -123,19 +122,21 @@ def build_llm_and_rag_chain(retriever):
     llm = None
     if ChatGroq is not None:
         try:
-            # If Groq requires API key, ensure environment is set by user
-            llm = ChatGroq(model="llama-3.1-13b", temperature=0.0)
+            # Using a common Groq model name. Ensure GROQ_API_KEY is set.
+            llm = ChatGroq(model="llama3-8b-8192", temperature=0.0, api_key=GROQ_API_KEY)
         except Exception as e:
+            st.error(f"Error initializing ChatGroq: {e}. Falling back to OpenAI (if configured).")
             llm = None
     if llm is None and ChatOpenAI is not None:
         # Fallback to OpenAI Chat model (requires OPENAI_API_KEY env var)
         try:
-            llm = ChatOpenAI()
-        except Exception:
+            llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0) # Added model name for ChatOpenAI
+        except Exception as e:
+            st.error(f"Error initializing ChatOpenAI: {e}.")
             llm = None
 
     if llm is None:
-        raise ImportError("No suitable LLM available. Install langchain_groq or langchain_openai and set credentials.")
+        raise ImportError("No suitable LLM available. Install langchain_groq or langchain_openai and set credentials (GROQ_API_KEY or OPENAI_API_KEY).")
 
     # Build a contextualize (question rewriter) prompt
     contextualize_q_system_prompt = (
@@ -153,18 +154,16 @@ def build_llm_and_rag_chain(retriever):
 
     history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
-    # QA prompt
-    qa_system_prompt = ( """
+    # QA prompt - Removed extra quotes
+    qa_system_prompt = (
         "You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. "
-        "If you don't know the answer, just say that you don't know. Use at most three sentences and keep the answer concise.
-
-{context}"
-"""
+        "If you don't know the answer, just say that you don't know. Use at most three sentences and keep the answer concise.\n\n"
+        "{context}"
     )
     qa_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", qa_system_prompt),
-            MessagesPlaceholder("chat_history"),
+            MessagesPlaceholder("chat_history"), # Important for keeping chat history in QA chain
             ("human", "{input}"),
         ]
     )
@@ -180,11 +179,11 @@ def recommend_program(profile: Dict[str, Any], top_k: int = 3) -> str:
     """Simple rule-based recommendation to start with. Replace with LLM-driven logic if required."""
     try:
         sem = int(profile.get('semester', 1)) if profile.get('semester') else 1
-    except Exception:
+    except ValueError: # Changed generic Exception to ValueError for int conversion
         sem = 1
     try:
         score = float(profile.get('academic_score') or 0)
-    except Exception:
+    except ValueError: # Changed generic Exception to ValueError for float conversion
         score = 0.0
 
     if sem <= 2 or score < 60:
@@ -232,13 +231,19 @@ def run_streamlit_app():
     # Load or build the retriever
     try:
         retriever = ingest_pdfs_to_faiss()
+    except FileNotFoundError as e: # Specific error for file not found
+        st.error(f"Error: {e}. Please ensure the '{PDFS_FOLDER}' folder exists and contains PDF brochures.")
+        return
     except Exception as e:
-        st.error(f"Error ingesting PDFs or loading index: {e}. Make sure PDFS_FOLDER contains brochures.")
+        st.error(f"Error ingesting PDFs or loading index: {e}.")
         return
 
     # Build rag chain
     try:
         rag_chain = build_llm_and_rag_chain(retriever)
+    except ImportError as e: # Specific error for LLM not found
+        st.error(f"Error building RAG chain: {e}")
+        return
     except Exception as e:
         st.error(f"Error building RAG chain: {e}. Check your LLM provider installations and credentials.")
         return
@@ -252,13 +257,20 @@ def run_streamlit_app():
         with st.spinner("Thinking..."):
             # rag_chain.invoke expects {"input": ..., "chat_history": [...]}
             try:
+                # chat_history should be a list of tuples or LangChain Message objects
+                # Converting st.session_state.history (list of tuples) to a format
+                # acceptable by MessagesPlaceholder if necessary, but LangChain generally handles (human_text, ai_text) tuples.
+                # For more robust chat history, consider converting to HumanMessage, AIMessage.
+                # Example: from langchain_core.messages import HumanMessage, AIMessage
+                # formatted_history = [HumanMessage(content=q) if i % 2 == 0 else AIMessage(content=a) for i, (q, a) in enumerate(st.session_state.history)]
+                
                 res = rag_chain.invoke({"input": user_input, "chat_history": st.session_state.history})
             except Exception as e:
                 st.error(f"RAG chain invocation failed: {e}")
                 res = {}
 
             # robust extraction of answer and sources
-            answer = res.get('answer') or res.get('result') or res.get('output') or ''
+            answer = res.get('answer') or res.get('result') or res.get('output') or 'Sorry, I could not process that request.'
             # some chains return 'source_documents' or 'sources'
             sources = res.get('source_documents') or res.get('sources') or []
 
@@ -271,21 +283,24 @@ def run_streamlit_app():
                 st.markdown("**Source snippets:**")
                 for i, doc in enumerate(sources[:3]):
                     # doc may be a Document object or dict
-                    text = getattr(doc, 'page_content', None) or doc.get('page_content') if isinstance(doc, dict) else str(doc)
+                    text = getattr(doc, 'page_content', None) or (doc.get('page_content') if isinstance(doc, dict) else str(doc))
                     if text:
                         text = text.replace('\n', ' ')[:400]
                         st.write(f"- {text}...")
 
             # Save conversation locally and to MongoDB
-            st.session_state.history.append((user_input, answer))
+            st.session_state.history.append((user_input, answer)) # Storing as tuple (user_input, ai_response)
             try:
-                coll = get_mongo_collection()
-                coll.insert_one({
-                    "lead_email": email,
+                # Ensure lead_email is captured if available, otherwise store conversation generally
+                mongo_doc = {
                     "question": user_input,
                     "answer": answer,
                     "timestamp": time.time(),
-                })
+                }
+                if email and email.strip(): # Only add lead_email if available
+                    mongo_doc["lead_email"] = email
+                coll = get_mongo_collection()
+                coll.insert_one(mongo_doc)
             except Exception:
                 # don't block UI on DB error
                 pass
@@ -306,4 +321,4 @@ def run_streamlit_app():
 # ------------------------- Entrypoint -----------------------------------
 if __name__ == '__main__':
     run_streamlit_app()
-
+  
