@@ -19,3 +19,4 @@ faiss-cpu
 pypdf==4.2.0
 #langchain-text-splitters
 python-dotenv==1.0.1
+streamlit-pdf
