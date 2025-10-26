@@ -8,10 +8,10 @@ numpy
 # --- LangChain Core Packages ---
 #langchain==0.2.1
 langchain
-#langchain-core==0.2.3
-langchain-core
-#langchain-community==0.2.1
-langchain-community
+langchain-core==0.2.3
+#langchain-core
+langchain-community==0.2.1
+#langchain-community
 #langchain-groq==0.1.5
 langchain-groq
 #langchain-text-splitters==0.2.0
