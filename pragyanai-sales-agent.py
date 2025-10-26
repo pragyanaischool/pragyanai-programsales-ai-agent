@@ -107,10 +107,32 @@ def create_market_research_agent(llm):
     agent = create_tool_calling_agent(llm, [search_tool], prompt)
     return AgentExecutor(agent=agent, tools=[search_tool], verbose=True)
 
-# --- MODIFIED: Main function to build the enhanced Orchestrator Agent ---
-# ---
-# Paste this entire function into your code, replacing the old version.
-# ---
+# Function to create the RAG Specialist Agent
+def create_program_info_agent(llm, retriever):
+    """Creates an agent focused solely on retrieving information from documents."""
+    
+    # 1. Define the Tool: This agent's only tool is the retriever, which
+    #    searches the FAISS vector store created from your PDFs.
+    retriever_tool = create_retriever_tool(
+        retriever, 
+        "pragyanai_program_search", 
+        "Search for specific information about PragyanAI's programs."
+    )
+    
+    # 2. Define the Agent's Core Instructions (Its Prompt):
+    #    These instructions are very strict to ensure it only uses the documents.
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a helpful assistant that answers questions based ONLY on the provided context about PragyanAI programs. Do not make up information."),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ])
+    
+    # 3. Create the Agent: This combines the LLM, the tool, and the prompt.
+    agent = create_tool_calling_agent(llm, [retriever_tool], prompt)
+    
+    # 4. Create the Executor: This is the final, runnable agent.
+    return AgentExecutor(agent=agent, tools=[retriever_tool], verbose=True)
+  
 
 # Upgraded Main function to build the enhanced Orchestrator Agent
 def build_main_orchestrator(llm, retriever, user_profile):
