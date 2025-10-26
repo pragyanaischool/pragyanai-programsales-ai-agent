@@ -13,8 +13,7 @@ langchain-groq==0.1.5
 langchain-text-splitters==0.2.0
 groq
 pymongo
-#sentence-transformers
-sentence-transformers==3.0.1
+sentence-transformers
 faiss-cpu
 #pypdf
 pypdf==4.2.0
