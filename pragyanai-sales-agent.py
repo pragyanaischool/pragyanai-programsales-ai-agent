@@ -1,12 +1,11 @@
 """
 PragyanAI - Multi-Agent Sales Bot (LangChain + Groq + FAISS + MongoDB)
 
-FINAL VERSION 2.0: This script enhances the orchestrator agent to act as a true "synthesis expert,"
-combining findings from its specialist agents into a single, highly persuasive response.
+FINAL VERSION 2.1: This script resolves the `.bind_tools` version mismatch error by
+relying on an updated requirements.txt file. It also includes minor code cleanup.
 
 Features:
-- **Enhanced Orchestrator**: The main agent is now explicitly instructed to query both specialist agents
-  and synthesize their findings, acting as a Head of Sales.
+- **Enhanced Orchestrator**: Manages the user conversation with a persuasive sales strategy.
 - **Program Info Agent**: A RAG specialist for internal document knowledge.
 - **Market Research Agent**: A web search specialist for competitive analysis.
 - **Impressive, Synthesized Output**: The final comparison is now richer, directly
@@ -14,7 +13,7 @@ Features:
 - All previous features (PDF viewer, lead capture, enrollment link) are retained.
 
 Requirements:
-    pip install -U langchain langchain_core langchain_community langchain-text-splitters langchain-groq pymongo sentence-transformers faiss-cpu streamlit pypdf pandas langchain-tavily langchain-openai
+    Ensure your requirements.txt file has the latest unpinned versions of all langchain packages.
 """
 import os
 import time
@@ -107,37 +106,8 @@ def create_market_research_agent(llm):
     agent = create_tool_calling_agent(llm, [search_tool], prompt)
     return AgentExecutor(agent=agent, tools=[search_tool], verbose=True)
 
-# Function to create the RAG Specialist Agent
-def create_program_info_agent(llm, retriever):
-    """Creates an agent focused solely on retrieving information from documents."""
-    
-    # 1. Define the Tool: This agent's only tool is the retriever, which
-    #    searches the FAISS vector store created from your PDFs.
-    retriever_tool = create_retriever_tool(
-        retriever, 
-        "pragyanai_program_search", 
-        "Search for specific information about PragyanAI's programs."
-    )
-    
-    # 2. Define the Agent's Core Instructions (Its Prompt):
-    #    These instructions are very strict to ensure it only uses the documents.
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant that answers questions based ONLY on the provided context about PragyanAI programs. Do not make up information."),
-        ("human", "{input}"),
-        MessagesPlaceholder("agent_scratchpad"),
-    ])
-    
-    # 3. Create the Agent: This combines the LLM, the tool, and the prompt.
-    agent = create_tool_calling_agent(llm, [retriever_tool], prompt)
-    
-    # 4. Create the Executor: This is the final, runnable agent.
-    return AgentExecutor(agent=agent, tools=[retriever_tool], verbose=True)
-  
-
 # Upgraded Main function to build the enhanced Orchestrator Agent
 def build_main_orchestrator(llm, retriever, user_profile):
-    """Builds the main orchestrator agent with an enhanced 'Head of Marketing' persona."""
-    
     program_info_agent = create_program_info_agent(llm, retriever)
     market_research_agent = create_market_research_agent(llm)
 
@@ -156,7 +126,6 @@ def build_main_orchestrator(llm, retriever, user_profile):
         ),
     ]
 
-    # The Orchestrator's prompt is significantly upgraded for a top-tier marketing and sales persona.
     system_prompt = f"""
     You are Pragyan, the Chief AI Career Strategist and Head of Admissions at PragyanAI (www.pragyanai.com). 
     Your persona is that of an elite, visionary leader in the AI education space. You are deeply invested in the user's success. Your communication style is confident, strategic, and incredibly persuasive.
@@ -202,12 +171,12 @@ def build_main_orchestrator(llm, retriever, user_profile):
     ])
     
     main_agent = create_tool_calling_agent(llm, tools, prompt)
-    return AgentExecutor(agent=main_agent, tools=tools, verbose=True) 
+    return AgentExecutor(agent=main_agent, tools=tools, verbose=True)
 
 # Helper function to display PDF
 def display_pdf(file_path):
     try:
-       st.pdf(file_path)
+        st.pdf(file_path)
     except Exception as e:
         st.error(f"Failed to display PDF: {e}")
 
@@ -311,3 +280,4 @@ def run_streamlit_app():
 
 if __name__ == '__main__':
     run_streamlit_app()
+  
