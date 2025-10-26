@@ -44,8 +44,8 @@ except ImportError:
 # This is the corrected version
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain, create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+#from langchain.chains import create_history_aware_retriever, create_retrieval_chain, create_stuff_documents_chain
+#from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 # Community packages for documents, embeddings and vectorstores
 from langchain_community.document_loaders import PyPDFLoader
