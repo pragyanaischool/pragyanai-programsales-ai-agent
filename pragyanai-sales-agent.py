@@ -43,7 +43,10 @@ from langchain_community.vectorstores import FAISS
 MONGODB_URI = st.secrets.get("MONGODB_URI")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
 TAVILY_API_KEY = st.secrets.get("TAVILY_API_KEY")
-
+# GoogleSearchAPIWrapper, 
+# DuckDuckGoSearchRun (good)
+# GoogleSerperAPIWrapper (good)
+# SerpAPIWrapper
 MONGO_DB_NAME = "pragyanai"
 MONGO_COLLECTION = "leads"
 PDFS_FOLDER = "pdfs/"
